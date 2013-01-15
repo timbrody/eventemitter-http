@@ -6,13 +6,13 @@
 # change 'tests => 1' to 'tests => last_test_to_print';
 
 use Test::More tests => 1;
-use EventEmitter::HTTP::UserAgent;
+use EventEmitter::HTTP;
 
 #########################
 
 my $condvar = AnyEvent->condvar;
 
-my $req = EventEmitter::HTTP::UserAgent->request(
+my $req = EventEmitter::HTTP->request(
 	HTTP::Request->new( GET => 'http://www.ecs.soton.ac.uk/' ),
 	sub {
 		my ($res) = @_;

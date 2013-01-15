@@ -1,5 +1,11 @@
 package EventEmitter::HTTP::UserAgent;
 
+=head1 NAME
+
+EventEmitter::HTTP::UserAgent - HTTP client
+
+=cut
+
 use URI;
 use AnyEvent;
 use AnyEvent::Socket;
@@ -82,3 +88,18 @@ sub request
 }
 
 1;
+
+__END__
+
+=head1 SEE ALSO
+
+L<AnyEvent>, L<EventEmitter>
+
+=head1 COPYRIGHT
+
+Copyright (C) 2013 by Tim Brody
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself, either Perl version 5.10.1 or,
+at your option, any later version of Perl 5 you may have available.
+
