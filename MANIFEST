@@ -1,0 +1,6 @@
+Changes
+Makefile.PL
+MANIFEST
+README
+t/EventEmitter-HTTP.t
+lib/EventEmitter/HTTP.pm
