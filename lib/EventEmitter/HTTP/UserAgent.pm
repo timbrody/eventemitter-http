@@ -43,6 +43,7 @@ sub request
 		my $handle;
 		$handle = AnyEvent::Handle->new(
 			fh => $fh,
+			($uri->scheme eq 'https' ? (tls => 'connect') : ()),
 			on_drain => sub {
 				$req->emit('drain');
 			},
