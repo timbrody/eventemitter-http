@@ -6,6 +6,23 @@ use strict;
 
 use constant CRLF => "\015\012";
 
+sub connection
+{
+	my ($self, $connection) = @_;
+
+	# write the request
+	$connection->push_write(sprintf("%s %s %s\r\n",
+			$self->method,
+			$self->uri->path,
+			$self->protocol,
+		));
+	$connection->push_write($self->headers->as_string("\r\n"));
+	$connection->push_write("\r\n");
+
+	$self->{_connection} = $connection;
+	$self->emit('connection', $connection);
+}
+
 sub write
 {
 	my ($self, $data) = @_;
