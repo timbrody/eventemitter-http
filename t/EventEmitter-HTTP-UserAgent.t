@@ -25,6 +25,8 @@ my $req = EventEmitter::HTTP->request(
 	}
 );
 
+$req->on('error', sub { diag @_ });
+
 $req->end;
 
 $condvar->recv; # wait

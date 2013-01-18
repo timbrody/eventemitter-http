@@ -15,8 +15,12 @@ use EventEmitter::HTTP::Response;
 
 use strict;
 
-my %CONNCACHE;
-my $CONNCACHE_TIMEOUT = 300;
+my $CONN_CACHE_TIMEOUT = 300;
+my $MAX_HOST_CONNS = 4;
+
+my %CONN_CACHE;
+my %CONN_CACHE_FREE;
+my %CONN_CACHE_WAITING;
 
 sub request
 {
@@ -24,6 +28,8 @@ sub request
 
 	$req = $req->clone;
 	$req = bless $req, 'EventEmitter::HTTP::Request';
+
+	$req->on('response', sub { &$cb($_[0]) }) if defined $cb;
 
 	my $uri = $req->uri;
 
@@ -33,97 +39,117 @@ sub request
 	$req->header(Host => $uri->host);
 	$req->header(Transfer_Encoding => 'chunked');
 
-	my $res;
-
-	my $handle;
-
-	my %req_cb = (
-		on_drain => sub {
-			$req->emit('drain');
-		},
-		on_read => sub {
-			if (defined $res) {
-				for ($_[0]->{rbuf}) {
-					&{$res->{_parse_body}};
-				}
-			}
-			elsif ($_[0]->{rbuf} =~ /\r\n\r\n/) {
-				$res = EventEmitter::HTTP::Response->parse($`);
-				$_[0]->{rbuf} = $';
-
-				$res->on('end', sub {
-					conn_cache_store($uri->host_port, $handle);
-				});
-
-				&$cb($res) if defined $cb;
-
-				for ($_[0]->{rbuf}) {
-					&{$res->{_parse_body}};
-				}
-			}
-		},
-		on_error => sub {
-			$req->emit('error', $!, $_[2]) if $_[1]; # if fatal
-		},
-		on_eof => sub {
-			$handle->destroy;
-			$res->emit('end') if defined $res;
-		},
-	);
-
-	$handle = conn_cache_fetch($uri->host_port);
-
-	if (!defined $handle) {
-		tcp_connect $uri->host, $uri->port, sub {
-			my ($fh) = @_;
-
-			if (!defined $fh) {
-				my $err = $!;
-				AnyEvent::postpone { $req->emit('error', "Unable to connect: $err") };
-				return;
-			}
-
-			$handle = AnyEvent::Handle->new(
-				fh => $fh,
-				($uri->scheme eq 'https' ? (tls => 'connect') : ()),
-				%req_cb,
-			);
-
-			$req->connection($handle);
-		};
-	}
-	else {
-		$req->$_($req_cb{$_}) for keys %req_cb;
-		$req->connection($handle);
-	}
+	_connect($req);
 
 	return $req;
 }
 
+sub _connect
+{
+	my ($req) = @_;
+
+	my $host_port = $req->uri->host_port;
+
+	my $handle = conn_cache_fetch($host_port);
+
+	if (defined $handle) {
+		conn_cache_bind($host_port, $handle, $req);
+	}
+	elsif (@{$CONN_CACHE{$host_port}} >= $MAX_HOST_CONNS) {
+		push @{$CONN_CACHE_WAITING{$host_port}}, $req;
+	}
+	else {
+		__connect($req, sub {
+			conn_cache_store($host_port, $_[0]);
+			conn_cache_bind($host_port, $_[0], $req);
+		});
+	}
+}
+
+sub __connect
+{
+	my ($req, $cb) = @_;
+
+	my $uri = $req->uri;
+
+	tcp_connect $uri->host, $uri->port, sub {
+		my ($fh) = @_;
+
+		if (!defined $fh) {
+			my $err = $!;
+			AnyEvent::postpone { $req->emit('error', "Unable to connect: $err") };
+			return;
+		}
+
+		my $handle;
+		$handle = AnyEvent::Handle->new(
+			fh => $fh,
+			($uri->scheme eq 'https' ? (tls => 'connect') : ()),
+		);
+
+		&$cb($handle);
+	};
+}
+
+sub conn_cache_bind
+{
+	my ($host_port, $handle, $req) = @_;
+
+	$CONN_CACHE_FREE{$handle} = 0;
+
+	$req->on('response', sub {
+		$_[0]->on('end', sub {
+			conn_cache_unbind($host_port, $handle);
+		});
+	});
+	$req->on('error', sub { conn_cache_remove($host_port, $handle) });
+	$req->on('eof', sub { conn_cache_remove($host_port, $handle) });
+
+	$req->bind($handle);
+}
+
+sub conn_cache_unbind
+{
+	my ($host_port, $handle) = @_;
+
+	$handle->on_read(sub { conn_cache_remove($host_port, $handle) });
+	$handle->on_error(sub { conn_cache_remove($host_port, $handle) });
+	$handle->on_eof(sub { conn_cache_remove($host_port, $handle) });
+	$handle->timeout($CONN_CACHE_TIMEOUT);
+
+	$CONN_CACHE_FREE{$handle} = 1;
+
+	# run the next waiting request
+	my $req = shift @{$CONN_CACHE_WAITING{$host_port}};
+	_connect($req) if defined $req;
+}
+
+sub conn_cache_remove
+{
+	my ($host_port, $handle) = @_;
+
+	delete $CONN_CACHE_FREE{$handle};
+
+	@{$CONN_CACHE{$host_port}} = grep { $_ ne $handle } @{$CONN_CACHE{$host_port}};
+	delete $CONN_CACHE{$host_port} if @{$CONN_CACHE{$host_port}} == 0;
+
+	$handle->destroy;
+}
+
 sub conn_cache_store
 {
-	my( $host_port, $handle ) = @_;
+	my ($host_port, $handle) = @_;
 
-	push @{$CONNCACHE{$host_port}}, $handle;
+	push @{$CONN_CACHE{$host_port}}, $handle;
 
-	my $destroy = sub {
-		@{$CONNCACHE{$host_port}} = grep { $_ != $handle } @{$CONNCACHE{$host_port}};
-		$handle->destroy;
-		delete $CONNCACHE{$host_port} if !@{$CONNCACHE{$host_port}};
-	};
-
-	$handle->on_error($destroy);
-	$handle->on_eof($destroy);
-	$handle->on_read($destroy);
-	$handle->timeout($CONNCACHE_TIMEOUT);
+	$CONN_CACHE_FREE{$handle} = 1;
 }
 
 sub conn_cache_fetch
 {
 	my( $host_port ) = @_;
 
-	my $handle = shift @{$CONNCACHE{$host_port}};
-	delete $CONNCACHE{$host_port} if !@{$CONNCACHE{$host_port}};
+	my ($handle) = grep { $CONN_CACHE_FREE{$_} } @{$CONN_CACHE{$host_port}};
 
 	return $handle;
 }
