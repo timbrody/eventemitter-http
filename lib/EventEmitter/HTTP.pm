@@ -30,8 +30,7 @@ EventEmitter::HTTP - implementation of Node.JS http
 		}
 	);
 	
-	# $_[0] is the errcode
-	$req->on('error', sub { die $_[1] });
+	$req->on('error', sub { die $_[0] });
 	
 	# send/finish the request
 	$req->end;

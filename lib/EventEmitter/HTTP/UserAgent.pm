@@ -15,8 +15,9 @@ use EventEmitter::HTTP::Response;
 
 use strict;
 
-my $CONN_CACHE_TIMEOUT = 300;
-my $MAX_HOST_CONNS = 4;
+our $CONN_CACHE_TIMEOUT = 300;
+our $MAX_HOST_CONNS = 4;
+our $MAX_HEADER_LENGTH = 1024 * 40; # 40x HTTP header lines
 
 my %CONN_CACHE;
 my %CONN_CACHE_FREE;
@@ -77,7 +78,10 @@ sub __connect
 
 		if (!defined $fh) {
 			my $err = $!;
-			AnyEvent::postpone { $req->emit('error', "Unable to connect: $err") };
+			AnyEvent->timer(
+				after => 0,
+				cb => $req->emit('error', "Unable to connect: $err"),
+			);
 			return;
 		}
 
@@ -85,6 +89,8 @@ sub __connect
 		$handle = AnyEvent::Handle->new(
 			fh => $fh,
 			($uri->scheme eq 'https' ? (tls => 'connect') : ()),
+			rbuf_max => $MAX_HEADER_LENGTH,
+			timeout => $CONN_CACHE_TIMEOUT,
 		);
 
 		&$cb($handle);
@@ -102,8 +108,14 @@ sub conn_cache_bind
 			conn_cache_unbind($host_port, $handle);
 		});
 	});
-	$req->on('error', sub { conn_cache_remove($host_port, $handle) });
-	$req->on('eof', sub { conn_cache_remove($host_port, $handle) });
+	$handle->on_error(sub {
+		$req->emit('error', $_[2]);
+		conn_cache_remove($host_port, $handle);
+	});
+	$handle->on_eof(sub {
+		$req->emit('error', 'Socket disconnected unexpectedly');
+		conn_cache_remove($host_port, $handle);
+	});
 
 	$req->bind($handle);
 }
@@ -115,7 +127,6 @@ sub conn_cache_unbind
 	$handle->on_read(sub { conn_cache_remove($host_port, $handle) });
 	$handle->on_error(sub { conn_cache_remove($host_port, $handle) });
 	$handle->on_eof(sub { conn_cache_remove($host_port, $handle) });
-	$handle->timeout($CONN_CACHE_TIMEOUT);
 
 	$CONN_CACHE_FREE{$handle} = 1;
 

@@ -6,11 +6,15 @@
 # change 'tests => 1' to 'tests => last_test_to_print';
 
 use Test::More tests => 1;
+use AnyEvent;
 use EventEmitter::HTTP;
 
 #########################
 
 my $condvar = AnyEvent->condvar;
+
+diag $AnyEvent::MODEL;
+diag 'Connecting to http://www.ecs.soton.ac.uk/';
 
 my $req = EventEmitter::HTTP->request(
 	HTTP::Request->new( GET => 'http://www.ecs.soton.ac.uk/' ),
@@ -25,7 +29,9 @@ my $req = EventEmitter::HTTP->request(
 	}
 );
 
-$req->on('error', sub { diag @_ });
+$req->on('connection', sub { diag 'Connected...' });
+
+$req->on('error', sub { diag "@_"; $condvar->send });
 
 $req->end;
 
