@@ -1,10 +1,19 @@
 package EventEmitter::HTTP::Request;
 
-use base qw( HTTP::Request EventEmitter );
+# must call EventEmitter::DESTROY
+use base qw( EventEmitter HTTP::Request );
 
 use strict;
 
 my $CRLF = "\015\012";
+
+sub error
+{
+	my ($self, $err) = @_;
+
+	$self->emit('error', $err);
+	$self->unbind;
+}
 
 sub bind
 {
@@ -20,45 +29,20 @@ sub bind
 	$handle->push_write($self->headers->as_string($CRLF));
 	$handle->push_write($CRLF);
 
-	# eof before a response is received is always an error
-	$self->{_on_close} = sub {
-		$self->emit('error', 'Socket closed before response received');
-	};
-	$self->on('close', sub { &{$self->{_on_close}} });
-
-	# start reading the response
-	$handle->on_read(sub {
-		CONTINUE:
-		if ($_[0]->{rbuf} =~ /$CRLF$CRLF/) {
-			my $res = EventEmitter::HTTP::Response->parse($`);
-			$_[0]->{rbuf} = $';
-			if ($res->code == 100) {
-				goto CONTINUE;
-			}
-
-			$res->request($self);
-
-			# eof during a response is up to the response to decide
-			$self->{_on_close} = sub {
-				$res->emit('close');
-			};
-
-			$handle->on_read(sub {
-				for($_[0]->{rbuf}) {
-					&{$res->{_parse_body}};
-				}
-			});
-
-			$self->emit('response', $res);
-
-			for($_[0]->{rbuf}) {
-				&{$res->{_parse_body}};
-			}
-		}
-	});
-
 	$self->{_handle} = $handle;
-	$self->emit('connection', $handle);
+
+	$self->emit('connection', $self);
+
+	if ($self->{_complete}) {
+		$self->end;
+	}
+}
+
+sub unbind
+{
+	my ($self) = @_;
+
+	delete $self->{_handle};
 }
 
 sub write
@@ -84,14 +68,14 @@ sub end
 
 	if (!$self->{_handle})
 	{
-		$self->on('connection', sub {
-			$self->end;
-		});
+		$self->{_complete} = 1;
 		return;
 	}
 
 	$self->write(""); # write any buffered data
 	$self->{_handle}->push_write('0'.$CRLF.$CRLF);
+
+	$self->unbind;
 }
 
 1;

@@ -1,8 +1,26 @@
 package EventEmitter::HTTP::Response;
 
-use base qw( HTTP::Response EventEmitter );
+# must call EventEmitter::DESTROY
+use base qw( EventEmitter HTTP::Response );
 
 use strict;
+
+sub close
+{
+	my ($self) = @_;
+
+	&{$self->{_on_close}}($self);
+}
+
+sub read
+{
+	my ($self) = @_;
+
+	# side-effect the passed buffer
+	for($_[1]) {
+		&{$self->{_on_read}}($self);
+	}
+}
 
 sub parse
 {
@@ -14,38 +32,42 @@ sub parse
 
 	if ($te eq 'chunked') {
 		$self->{_chunk_length} = undef;
-		$self->{_parse_body} = sub { $self->_parse_te_chunked_range };
-		$self->on('close', sub {
+		$self->{_on_read} = \&_parse_te_chunked_range;
+		$self->{_on_close} = sub {
+			my ($self) = @_;
 			if ($self->{_chunk_remains}) {
 				$self->request->emit('error', 'Socket closed during chunked response');
 			}
-		});
+		};
 	}
 	elsif (defined($self->header('Content-Length'))) {
 		my $total = 0;
-		$self->{_parse_body} = sub {
+		$self->{_on_read} = sub {
+			my ($self) = @_;
 			$total += length($_);
 			$self->emit('data', $_);
 			$_ = "";
 			if ($total >= $self->header('Content-Length')) {
-				$self->emit('end');
+				$self->emit('end', $self);
 			}
 		};
-		$self->on('close', sub {
+		$self->{_on_close} = sub {
+			my ($self) = @_;
 			if ($total < $self->header('Content-Length')) {
 				$self->request->emit('error', 'Socket closed before entire response received');
 			}
-		});
+		};
 	}
 	else {
-		$self->{_parse_body} = sub {
+		$self->{_on_read} = sub {
+			my ($self) = @_;
 			$self->emit('data', $_);
 			$_ = "";
 		};
-		# close must always be 'end'
-		$self->on('close', sub {
-			$self->emit('end');
-		});
+		$self->{_on_close} = sub {
+			my ($self) = @_;
+			$self->emit('end', $self);
+		};
 	}
 
 	return $self;
@@ -60,12 +82,12 @@ sub _parse_te_chunked_range
 
 	if ($self->{_chunk_remains} == 2) { # 0 byte payload = end of chunks
 		$self->{_chunk_remains} = 0;
-		$self->{_parse_body} = sub { $self->_parse_te_chunked_trailer };
+		$self->{_on_read} = \&_parse_te_chunked_trailer;
 	}
 	else {
-		$self->{_parse_body} = sub { $self->_parse_te_chunked_chunk };
+		$self->{_on_read} = \&_parse_te_chunked_chunk;
 	}
-	&{$self->{_parse_body}};
+	$self->read($_);
 }
 
 sub _parse_te_chunked_chunk
@@ -85,8 +107,8 @@ sub _parse_te_chunked_chunk
 	$self->emit('data', $data) if length $data;
 
 	if ($self->{_chunk_remains} == 0) {
-		$self->{_parse_body} = sub { $self->_parse_te_chunked_range };
-		&{$self->{_parse_body}};
+		$self->{_on_read} = \&_parse_te_chunked_range;
+		$self->read($_);
 	}
 }
 
@@ -102,7 +124,7 @@ sub _parse_te_chunked_trailer
 			$self->header(@_);
 		});
 
-		$self->emit('end');
+		$self->emit('end', $self);
 	}
 }
 

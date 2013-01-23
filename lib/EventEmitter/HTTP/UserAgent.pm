@@ -15,6 +15,8 @@ use EventEmitter::HTTP::Response;
 
 use strict;
 
+my $CRLF = "\015\012";
+
 my %CONN_CACHE;
 my %CONN_CACHE_FREE;
 my %CONN_CACHE_WAITING;
@@ -98,25 +100,55 @@ sub conn_cache_bind
 
 	$CONN_CACHE_FREE{$handle} = 0;
 
-	$req->on('response', sub {
-		my $res = $_[0];
-		$res->on('end', sub {
-			# On Connection: close (booo), shut down the socket
-			if ($res->header('Connection') && $res->header('Connection') eq 'close') {
+	# get ready to read the respones
+	$handle->on_read(sub {
+		my ($handle) = @_;
+		CONTINUE:
+		if ($handle->{rbuf} =~ /$CRLF$CRLF/) {
+			my $res = EventEmitter::HTTP::Response->parse($`);
+			$handle->{rbuf} = $';
+			if ($res->code == 100) {
+				goto CONTINUE;
+			}
+
+			$res->request($req);
+
+			$req->emit('response', $res);
+
+			$handle->on_read(sub {
+				my ($handle) = @_;
+				$res->read($handle->{rbuf});
+			});
+			$handle->on_eof(sub {
+				my ($handle) = @_;
+				$req->unbind($handle);
+				$res->close;
 				conn_cache_remove($host_port, $handle);
-			}
-			# Yay, unbind and re-use the connection
-			else {
-				conn_cache_unbind($host_port, $handle);
-			}
-		});
+			});
+
+			$res->on('end', sub {
+				my ($res) = @_;
+				# On Connection: close (booo), shut down the socket
+				if ($res->header('Connection') && $res->header('Connection') eq 'close') {
+					conn_cache_remove($host_port, $handle);
+				}
+				# Yay, unbind and re-use the connection
+				else {
+					conn_cache_unbind($host_port, $handle);
+				}
+			});
+
+			$res->read($handle->{rbuf});
+		}
 	});
 	$handle->on_error(sub {
-		$req->emit('error', $_[2]);
+		my ($handle, $fatal, $err) = @_;
+		$req->error($err);
 		conn_cache_remove($host_port, $handle);
 	});
 	$handle->on_eof(sub {
-		$req->emit('close');
+		my ($handle) = @_;
+		$req->error('Socket closed before response received');
 		conn_cache_remove($host_port, $handle);
 	});
 
@@ -127,9 +159,9 @@ sub conn_cache_unbind
 {
 	my ($host_port, $handle) = @_;
 
-	$handle->on_read(sub { conn_cache_remove($host_port, $handle) });
-	$handle->on_error(sub { conn_cache_remove($host_port, $handle) });
-	$handle->on_eof(sub { conn_cache_remove($host_port, $handle) });
+	$handle->on_read(sub { conn_cache_remove($host_port, $_[0]) });
+	$handle->on_error(sub { conn_cache_remove($host_port, $_[0]) });
+	$handle->on_eof(sub { conn_cache_remove($host_port, $_[0]) });
 
 	$CONN_CACHE_FREE{$handle} = 1;
 

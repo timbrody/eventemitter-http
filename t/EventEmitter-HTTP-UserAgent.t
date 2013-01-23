@@ -33,9 +33,10 @@ my $req = EventEmitter::HTTP->request(
 		diag('Got response ' . $res->status_line);
 #		diag($res->as_string);
 
-		$res->on('data', sub { });
+		my $total = 0;
+		$res->on('data', sub { $total += length($_[0]) });
 		
-		$res->on('end', sub { $condvar->send });
+		$res->on('end', sub { diag "Read $total bytes"; $condvar->send });
 	}
 );
 
@@ -47,6 +48,10 @@ $req->end;
 
 $condvar->recv; # wait
 
+#use Devel::Cycle;
+#find_cycle($req);
+#undef $req;
+
 $tries++;
 goto REDO if $tries < 2;
 
@@ -55,3 +60,4 @@ ok(1);
 # Insert your test code below, the Test::More module is use()ed here so read
 # its man page ( perldoc Test::More ) for help writing this test script.
 
+diag 'Done';
