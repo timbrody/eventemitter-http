@@ -15,10 +15,6 @@ use EventEmitter::HTTP::Response;
 
 use strict;
 
-our $CONN_CACHE_TIMEOUT = 300;
-our $MAX_HOST_CONNS = 4;
-our $MAX_HEADER_LENGTH = 1024 * 40; # 40x HTTP header lines
-
 my %CONN_CACHE;
 my %CONN_CACHE_FREE;
 my %CONN_CACHE_WAITING;
@@ -55,7 +51,7 @@ sub _connect
 	if (defined $handle) {
 		conn_cache_bind($host_port, $handle, $req);
 	}
-	elsif (@{$CONN_CACHE{$host_port}} >= $MAX_HOST_CONNS) {
+	elsif (@{$CONN_CACHE{$host_port}} >= $EventEmitter::HTTP::MAX_HOST_CONNS) {
 		push @{$CONN_CACHE_WAITING{$host_port}}, $req;
 	}
 	else {
@@ -88,8 +84,8 @@ sub __connect
 		$handle = AnyEvent::Handle->new(
 			fh => $fh,
 			($uri->scheme eq 'https' ? (tls => 'connect') : ()),
-			rbuf_max => $MAX_HEADER_LENGTH,
-			timeout => $CONN_CACHE_TIMEOUT,
+			rbuf_max => $EventEmitter::HTTP::MAX_HEADER_LENGTH,
+			timeout => $EventEmitter::HTTP::CONN_CACHE_TIMEOUT,
 		);
 
 		&$cb($handle);
@@ -103,8 +99,16 @@ sub conn_cache_bind
 	$CONN_CACHE_FREE{$handle} = 0;
 
 	$req->on('response', sub {
-		$_[0]->on('end', sub {
-			conn_cache_unbind($host_port, $handle);
+		my $res = $_[0];
+		$res->on('end', sub {
+			# On Connection: close (booo), shut down the socket
+			if ($res->header('Connection') && $res->header('Connection') eq 'close') {
+				conn_cache_remove($host_port, $handle);
+			}
+			# Yay, unbind and re-use the connection
+			else {
+				conn_cache_unbind($host_port, $handle);
+			}
 		});
 	});
 	$handle->on_error(sub {

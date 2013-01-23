@@ -41,9 +41,23 @@ EventEmitter::HTTP - implementation of Node.JS http
 
 =head1 DESCRIPTION
 
-=head1 METHODS
+=head1 GLOBAL SETTINGS
 
 =over 4
+
+=item $EventEmitter::HTTP::CONN_CACHE_TIMEOUT = 300
+
+Maximum seconds to keep an inactive socket open.
+
+=item $EventEmitter::HTTP::MAX_HOST_CONNS = 4
+
+Maximum connections to keep open to a single server.
+
+=item $EventEmitter::HTTP::MAX_HEADER_LENGTH = 40960
+
+HTTP response headers are read in their entirety into memory. Maximum number of bytes to read before we give up.
+
+=back
 
 =cut
 
@@ -57,7 +71,19 @@ use EventEmitter::HTTP::UserAgent;
 
 our @ISA = qw();
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
+
+# global settings
+our $CONN_CACHE_TIMEOUT = 300;
+our $MAX_HOST_CONNS = 4;
+our $MAX_HEADER_LENGTH = 1024 * 40; # 40x HTTP header lines
+
+=head1 METHODS
+
+=over 4
+
+=cut
+
 
 =item $req = EventEmitter::HTTP->request( $req, CALLBACK )
 

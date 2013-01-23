@@ -10,16 +10,18 @@ sub parse
 
 	my $self = $class->SUPER::parse($str);
 
-	if ($self->header('Transfer-Encoding') eq 'chunked') {
+	my $te = $self->header('Transfer-Encoding') || $self->header('TE') || '';
+
+	if ($te eq 'chunked') {
 		$self->{_chunk_length} = undef;
 		$self->{_parse_body} = sub { $self->_parse_te_chunked_range };
 		$self->on('close', sub {
 			if ($self->{_chunk_remains}) {
-				$self->request->emit('error', 'Socket closed before entire response received');
+				$self->request->emit('error', 'Socket closed during chunked response');
 			}
 		});
 	}
-	elsif ($self->header('Content-Length')) {
+	elsif (defined($self->header('Content-Length'))) {
 		my $total = 0;
 		$self->{_parse_body} = sub {
 			$total += length($_);

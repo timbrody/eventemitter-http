@@ -11,17 +11,27 @@ use EventEmitter::HTTP;
 
 #########################
 
-my $condvar = AnyEvent->condvar;
+my $url = 'http://rudar.ruc.dk/bitstream/1800/3027/3/Annika_Agger_-EURS_workshop_C.pdf.txt';
+$url = 'http://www.ecs.soton.ac.uk/';
+
+AnyEvent->condvar; # force load
 
 diag $AnyEvent::MODEL;
-diag 'Connecting to http://www.ecs.soton.ac.uk/';
+diag "Connecting to $url";
+
+my $tries = 0;
+
+REDO:
+
+my $condvar = AnyEvent->condvar;
 
 my $req = EventEmitter::HTTP->request(
-	HTTP::Request->new( GET => 'http://www.ecs.soton.ac.uk/' ),
+	HTTP::Request->new( GET => $url ),
 	sub {
 		my ($res) = @_;
 
 		diag('Got response ' . $res->status_line);
+#		diag($res->as_string);
 
 		$res->on('data', sub { });
 		
@@ -36,6 +46,9 @@ $req->on('error', sub { diag "@_"; $condvar->send });
 $req->end;
 
 $condvar->recv; # wait
+
+$tries++;
+goto REDO if $tries < 2;
 
 ok(1);
 
