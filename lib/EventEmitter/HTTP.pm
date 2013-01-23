@@ -57,7 +57,7 @@ use EventEmitter::HTTP::UserAgent;
 
 our @ISA = qw();
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 =item $req = EventEmitter::HTTP->request( $req, CALLBACK )
 

@@ -34,8 +34,7 @@ sub request
 
 	my $uri = $req->uri;
 
-	# add keep-alive etc.
-
+	# set protocol etc. for HTTP/1.1
 	$req->protocol('HTTP/1.1');
 	$req->header(Host => $uri->host);
 	$req->header(Transfer_Encoding => 'chunked');
@@ -113,7 +112,7 @@ sub conn_cache_bind
 		conn_cache_remove($host_port, $handle);
 	});
 	$handle->on_eof(sub {
-		$req->emit('error', 'Socket disconnected unexpectedly');
+		$req->emit('close');
 		conn_cache_remove($host_port, $handle);
 	});
 

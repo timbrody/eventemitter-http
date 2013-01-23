@@ -13,12 +13,37 @@ sub parse
 	if ($self->header('Transfer-Encoding') eq 'chunked') {
 		$self->{_chunk_length} = undef;
 		$self->{_parse_body} = sub { $self->_parse_te_chunked_range };
+		$self->on('close', sub {
+			if ($self->{_chunk_remains}) {
+				$self->request->emit('error', 'Socket closed before entire response received');
+			}
+		});
+	}
+	elsif ($self->header('Content-Length')) {
+		my $total = 0;
+		$self->{_parse_body} = sub {
+			$total += length($_);
+			$self->emit('data', $_);
+			$_ = "";
+			if ($total >= $self->header('Content-Length')) {
+				$self->emit('end');
+			}
+		};
+		$self->on('close', sub {
+			if ($total < $self->header('Content-Length')) {
+				$self->request->emit('error', 'Socket closed before entire response received');
+			}
+		});
 	}
 	else {
 		$self->{_parse_body} = sub {
 			$self->emit('data', $_);
 			$_ = "";
 		};
+		# close must always be 'end'
+		$self->on('close', sub {
+			$self->emit('end');
+		});
 	}
 
 	return $self;
@@ -32,6 +57,7 @@ sub _parse_te_chunked_range
 	$self->{_chunk_remains} = hex($1) + 2;
 
 	if ($self->{_chunk_remains} == 2) { # 0 byte payload = end of chunks
+		$self->{_chunk_remains} = 0;
 		$self->{_parse_body} = sub { $self->_parse_te_chunked_trailer };
 	}
 	else {

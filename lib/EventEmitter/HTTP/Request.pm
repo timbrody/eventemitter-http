@@ -20,6 +20,12 @@ sub bind
 	$handle->push_write($self->headers->as_string($CRLF));
 	$handle->push_write($CRLF);
 
+	# eof before a response is received is always an error
+	$self->{_on_close} = sub {
+		$self->emit('error', 'Socket closed before response received');
+	};
+	$self->on('close', sub { &{$self->{_on_close}} });
+
 	# start reading the response
 	$handle->on_read(sub {
 		CONTINUE:
@@ -31,6 +37,11 @@ sub bind
 			}
 
 			$res->request($self);
+
+			# eof during a response is up to the response to decide
+			$self->{_on_close} = sub {
+				$res->emit('close');
+			};
 
 			$handle->on_read(sub {
 				for($_[0]->{rbuf}) {
