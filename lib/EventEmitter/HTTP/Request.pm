@@ -7,6 +7,8 @@ use strict;
 
 my $CRLF = "\015\012";
 
+#sub DESTROY { warn "DESTROY $_[0]\n"; EventEmitter::DESTROY($_[0]) }
+
 sub error
 {
 	my ($self, $err) = @_;
@@ -22,7 +24,7 @@ sub bind
 	# write the request
 	$handle->push_write(sprintf("%s %s %s%s",
 			$self->method,
-			$self->uri->path,
+			$self->uri->path_query,
 			$self->protocol,
 			$CRLF
 		));

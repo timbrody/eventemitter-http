@@ -21,6 +21,11 @@ my %CONN_CACHE;
 my %CONN_CACHE_FREE;
 my %CONN_CACHE_WAITING;
 
+sub empty_cache
+{
+	%CONN_CACHE = %CONN_CACHE_FREE = %CONN_CACHE_WAITING;
+}
+
 sub request
 {
 	my( $class, $req, $cb ) = @_;
@@ -115,10 +120,21 @@ sub conn_cache_bind
 
 			$req->emit('response', $res);
 
-			$handle->on_read(sub {
+			my $on_read = sub {
 				my ($handle) = @_;
-				$res->read($handle->{rbuf});
-			});
+				if (!$res->read($handle->{rbuf})) {
+					# On Connection: close (booo), shut down the socket
+					if ($res->header('Connection') && $res->header('Connection') eq 'close') {
+						conn_cache_remove($host_port, $handle);
+					}
+					# Yay, unbind and re-use the connection
+					else {
+						conn_cache_unbind($host_port, $handle);
+					}
+				}
+			};
+
+			$handle->on_read($on_read);
 			$handle->on_eof(sub {
 				my ($handle) = @_;
 				$req->unbind($handle);
@@ -126,19 +142,8 @@ sub conn_cache_bind
 				conn_cache_remove($host_port, $handle);
 			});
 
-			$res->on('end', sub {
-				my ($res) = @_;
-				# On Connection: close (booo), shut down the socket
-				if ($res->header('Connection') && $res->header('Connection') eq 'close') {
-					conn_cache_remove($host_port, $handle);
-				}
-				# Yay, unbind and re-use the connection
-				else {
-					conn_cache_unbind($host_port, $handle);
-				}
-			});
-
-			$res->read($handle->{rbuf});
+			# parse the remaining buffer (if any)
+			&$on_read($handle);
 		}
 	});
 	$handle->on_error(sub {

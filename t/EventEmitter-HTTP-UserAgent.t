@@ -5,19 +5,30 @@
 
 # change 'tests => 1' to 'tests => last_test_to_print';
 
-use Test::More tests => 1;
+use Test::More tests => 3;
 use AnyEvent;
 use EventEmitter::HTTP;
 
 #########################
 
+our $REQUEST_C;
+our $RESPONSE_C;
+
+sub EventEmitter::HTTP::Request::DESTROY { $REQUEST_C--; EventEmitter::DESTROY($_[0]) }
+sub EventEmitter::HTTP::Response::DESTROY { $RESPONSE_C--; EventEmitter::DESTROY($_[0]) }
+
 my $url = 'http://rudar.ruc.dk/bitstream/1800/3027/3/Annika_Agger_-EURS_workshop_C.pdf.txt';
 $url = 'http://www.ecs.soton.ac.uk/';
+#$url = 'http://cadair.aber.ac.uk/dspace/bitstream/handle/2160/5412/to+grip.pdf;jsessionid=E6EFF4E548FDA3A565A27410737FF5F1?sequence=2';
 
 AnyEvent->condvar; # force load
 
 diag $AnyEvent::MODEL;
 diag "Connecting to $url";
+
+{
+$REQUEST_C = 2;
+$RESPONSE_C = 2;
 
 my $tries = 0;
 
@@ -48,12 +59,14 @@ $req->end;
 
 $condvar->recv; # wait
 
-#use Devel::Cycle;
-#find_cycle($req);
-#undef $req;
+undef $req;
 
 $tries++;
 goto REDO if $tries < 2;
+}
+
+is($REQUEST_C, 0, "Requests freed");
+is($RESPONSE_C, 0, "Responses freed");
 
 ok(1);
 

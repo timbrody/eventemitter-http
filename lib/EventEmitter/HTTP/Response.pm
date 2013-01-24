@@ -5,6 +5,8 @@ use base qw( EventEmitter HTTP::Response );
 
 use strict;
 
+#sub DESTROY { warn "DESTROY $_[0]\n"; EventEmitter::DESTROY($_[0]) }
+
 sub close
 {
 	my ($self) = @_;
@@ -16,9 +18,9 @@ sub read
 {
 	my ($self) = @_;
 
-	# side-effect the passed buffer
+	# side-effect the read buffer
 	for($_[1]) {
-		&{$self->{_on_read}}($self);
+		return &{$self->{_on_read}}($self);
 	}
 }
 
@@ -49,7 +51,9 @@ sub parse
 			$_ = "";
 			if ($total >= $self->header('Content-Length')) {
 				$self->emit('end', $self);
+				return 0;
 			}
+			return 1;
 		};
 		$self->{_on_close} = sub {
 			my ($self) = @_;
@@ -63,6 +67,7 @@ sub parse
 			my ($self) = @_;
 			$self->emit('data', $_);
 			$_ = "";
+			return 1;
 		};
 		$self->{_on_close} = sub {
 			my ($self) = @_;
@@ -77,7 +82,7 @@ sub _parse_te_chunked_range
 {
 	my ($self) = @_;
 
-	return unless s/^([^;\n]+)(;[^\n]+)?\r\n//;
+	return 1 unless s/^([^;\n]+)(;[^\n]+)?\r\n//;
 	$self->{_chunk_remains} = hex($1) + 2;
 
 	if ($self->{_chunk_remains} == 2) { # 0 byte payload = end of chunks
@@ -87,14 +92,14 @@ sub _parse_te_chunked_range
 	else {
 		$self->{_on_read} = \&_parse_te_chunked_chunk;
 	}
-	$self->read($_);
+	return $self->read($_);
 }
 
 sub _parse_te_chunked_chunk
 {
 	my ($self) = @_;
 
-	return if !length $_;
+	return 1 if !length $_;
 
 	my $data = substr($_, 0, $self->{_chunk_remains});
 	substr($_, 0, $self->{_chunk_remains}) = "";
@@ -106,10 +111,13 @@ sub _parse_te_chunked_chunk
 
 	$self->emit('data', $data) if length $data;
 
+	# finished chunk, onto the next range
 	if ($self->{_chunk_remains} == 0) {
 		$self->{_on_read} = \&_parse_te_chunked_range;
-		$self->read($_);
+		return $self->read($_);
 	}
+
+	return 1;
 }
 
 sub _parse_te_chunked_trailer
@@ -125,7 +133,10 @@ sub _parse_te_chunked_trailer
 		});
 
 		$self->emit('end', $self);
+		return 0;
 	}
+
+	return 1;
 }
 
 1;
