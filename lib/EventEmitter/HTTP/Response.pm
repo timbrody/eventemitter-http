@@ -47,7 +47,7 @@ sub parse
 		$self->{_on_read} = sub {
 			my ($self) = @_;
 			$total += length($_);
-			$self->emit('data', $_);
+			$self->emit('data', $_, $self);
 			$_ = "";
 			if ($total >= $self->header('Content-Length')) {
 				$self->emit('end', $self);
@@ -65,7 +65,7 @@ sub parse
 	else {
 		$self->{_on_read} = sub {
 			my ($self) = @_;
-			$self->emit('data', $_);
+			$self->emit('data', $_, $self);
 			$_ = "";
 			return 1;
 		};
@@ -109,7 +109,7 @@ sub _parse_te_chunked_chunk
 	substr($data,-2) = "" if $self->{_chunk_remains} == 0;
 	substr($data,-1) = "" if $self->{_chunk_remains} == 1;
 
-	$self->emit('data', $data) if length $data;
+	$self->emit('data', $data, $self) if length $data;
 
 	# finished chunk, onto the next range
 	if ($self->{_chunk_remains} == 0) {

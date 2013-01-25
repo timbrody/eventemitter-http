@@ -80,4 +80,13 @@ sub end
 	$self->unbind;
 }
 
+sub abort
+{
+	my ($self) = @_;
+
+	$self->emit('abort', $self->{_handle}, $self);
+
+	$self->unbind;
+}
+
 1;

@@ -5,7 +5,7 @@
 
 # change 'tests => 1' to 'tests => last_test_to_print';
 
-use Test::More tests => 3;
+use Test::More tests => 5;
 use AnyEvent;
 use EventEmitter::HTTP;
 
@@ -68,9 +68,42 @@ goto REDO if $tries < 2;
 is($REQUEST_C, 0, "Requests freed");
 is($RESPONSE_C, 0, "Responses freed");
 
+{
+my $maxlength = 100; # a small number
+
+my $condvar = AnyEvent->condvar;
+
+my $total = 0;
+my $ok = 1;
+
+my $req = EventEmitter::HTTP->request(
+	HTTP::Request->new( GET => $url ),
+	sub {
+		my ($res) = @_;
+
+		$res->on('data', sub {
+			$total += length($_[0]);
+			if ($total > $maxlength) {
+				$res->request->abort();
+				$condvar->send;
+			}
+		});
+		
+		$res->on('end', sub { $ok = 0; $condvar->send });
+	}
+);
+
+$req->on('error', sub { $ok = 0; $condvar->send });
+
+$req->end;
+
+$condvar->recv; # wait
+
+ok($total >= $maxlength, 'abort() happened after maxlength read');
+ok($ok, 'abort() does not trigger end or error');
+}
+
 ok(1);
 
 # Insert your test code below, the Test::More module is use()ed here so read
 # its man page ( perldoc Test::More ) for help writing this test script.
-
-diag 'Done';

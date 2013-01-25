@@ -123,6 +123,8 @@ sub conn_cache_bind
 			my $on_read = sub {
 				my ($handle) = @_;
 				if (!$res->read($handle->{rbuf})) {
+					$req->unbind($handle);
+
 					# On Connection: close (booo), shut down the socket
 					if ($res->header('Connection') && $res->header('Connection') eq 'close') {
 						conn_cache_remove($host_port, $handle);
@@ -158,6 +160,12 @@ sub conn_cache_bind
 	});
 
 	$req->bind($handle);
+
+	# user aborted the request (i.e. close the socket and stop receiving)
+	$req->on('abort', sub {
+		my ($handle) = @_;
+		conn_cache_remove($host_port, $handle) if defined $handle;
+	});
 }
 
 sub conn_cache_unbind
