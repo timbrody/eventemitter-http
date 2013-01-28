@@ -20,6 +20,7 @@ sub EventEmitter::HTTP::Response::DESTROY { $RESPONSE_C--; EventEmitter::DESTROY
 my $url = 'http://rudar.ruc.dk/bitstream/1800/3027/3/Annika_Agger_-EURS_workshop_C.pdf.txt';
 $url = 'http://www.ecs.soton.ac.uk/';
 #$url = 'http://cadair.aber.ac.uk/dspace/bitstream/handle/2160/5412/to+grip.pdf;jsessionid=E6EFF4E548FDA3A565A27410737FF5F1?sequence=2';
+#$url = 'http://kar.kent.ac.uk/24848/1/chss_0041.pdf';
 
 AnyEvent->condvar; # force load
 
@@ -68,8 +69,10 @@ goto REDO if $tries < 2;
 is($REQUEST_C, 0, "Requests freed");
 is($RESPONSE_C, 0, "Responses freed");
 
+$url = 'http://nrl.northumbria.ac.uk/600/1/jeremy.edge_phd.pdf';
 {
 my $maxlength = 100; # a small number
+$maxlength = 2 * 1024 * 1024;
 
 my $condvar = AnyEvent->condvar;
 

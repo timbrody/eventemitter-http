@@ -1,5 +1,15 @@
 package EventEmitter::HTTP::Response;
 
+=head1 NAME
+
+EventEmitter::HTTP::Response - HTTP response object
+
+=head1 METHODS
+
+=over 4
+
+=cut
+
 # must call EventEmitter::DESTROY
 use base qw( EventEmitter HTTP::Response );
 
@@ -140,3 +150,26 @@ sub _parse_te_chunked_trailer
 }
 
 1;
+
+__END__
+
+=back
+
+=head1 EVENTS
+
+=over 4
+
+=item data $buffer, $res
+
+Emitted when a piece of the message body is received.
+
+=item end $res
+
+Emitted when the entire response has been received.
+
+=back
+
+=head1 SEE ALSO
+
+Subclasses L<EventEmitter> and L<HTTP::Response>.
+

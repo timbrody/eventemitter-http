@@ -18,8 +18,22 @@ use strict;
 my $CRLF = "\015\012";
 
 my %CONN_CACHE;
+my %CONN_CACHE_COUNT;
 my %CONN_CACHE_FREE;
 my %CONN_CACHE_WAITING;
+
+sub describe
+{
+	my $msg = "Alive: ";
+	foreach my $host_port (keys %CONN_CACHE) {
+		$msg .= " $host_port [".@{$CONN_CACHE{$host_port}}."]";
+	}
+	$msg .= ", Waiting: ";
+	foreach my $host_port (keys %CONN_CACHE_WAITING) {
+		$msg .= " $host_port [".@{$CONN_CACHE_WAITING{$host_port}}."]";
+	}
+	return $msg;
+}
 
 sub empty_cache
 {
@@ -58,8 +72,8 @@ sub _connect
 	if (defined $handle) {
 		conn_cache_bind($host_port, $handle, $req);
 	}
-	elsif (@{$CONN_CACHE{$host_port}} >= $EventEmitter::HTTP::MAX_HOST_CONNS) {
-		push @{$CONN_CACHE_WAITING{$host_port}}, $req;
+	elsif ($CONN_CACHE_COUNT{$host_port} && $CONN_CACHE_COUNT{$host_port} >= $EventEmitter::HTTP::MAX_HOST_CONNS) {
+		push @{$CONN_CACHE_WAITING{$host_port} ||= []}, $req;
 	}
 	else {
 		__connect($req, sub {
@@ -74,15 +88,19 @@ sub __connect
 	my ($req, $cb) = @_;
 
 	my $uri = $req->uri;
+	my $host_port = $uri->host_port;
+
+	$CONN_CACHE_COUNT{$host_port}++;
 
 	tcp_connect $uri->host, $uri->port, sub {
 		my ($fh) = @_;
 
 		if (!defined $fh) {
+			delete $CONN_CACHE_COUNT{$host_port} if --$CONN_CACHE_COUNT{$host_port} == 0;
 			my $err = $!;
 			AnyEvent->timer(
 				after => 0,
-				cb => $req->emit('error', "Unable to connect: $err"),
+				cb => sub { $req->emit('error', "Unable to connect: $err") },
 			);
 			return;
 		}
@@ -96,6 +114,10 @@ sub __connect
 		);
 
 		&$cb($handle);
+	}, sub {
+		my ($fh) = @_;
+
+		return 15; # 15 second timeout
 	};
 }
 
@@ -112,7 +134,15 @@ sub conn_cache_bind
 		if ($handle->{rbuf} =~ /$CRLF$CRLF/) {
 			my $res = EventEmitter::HTTP::Response->parse($`);
 			$handle->{rbuf} = $';
+			if (!defined $res->code) {
+				$req->unbind;
+				conn_cache_remove($host_port, $handle);
+
+				$req->emit('error', "Unrecognised HTTP response: $`");
+				return;
+			}
 			if ($res->code == 100) {
+				$req->emit('continue', $req);
 				goto CONTINUE;
 			}
 
@@ -168,6 +198,16 @@ sub conn_cache_bind
 	});
 }
 
+sub conn_cache_next
+{
+	my ($host_port) = @_;
+
+	my $req = shift @{$CONN_CACHE_WAITING{$host_port}};
+	delete $CONN_CACHE_WAITING{$host_port} if @{$CONN_CACHE_WAITING{$host_port}} == 0;
+
+	_connect($req) if defined $req;
+}
+
 sub conn_cache_unbind
 {
 	my ($host_port, $handle) = @_;
@@ -178,9 +218,7 @@ sub conn_cache_unbind
 
 	$CONN_CACHE_FREE{$handle} = 1;
 
-	# run the next waiting request
-	my $req = shift @{$CONN_CACHE_WAITING{$host_port}};
-	_connect($req) if defined $req;
+	conn_cache_next($host_port);
 }
 
 sub conn_cache_remove
@@ -193,13 +231,17 @@ sub conn_cache_remove
 	delete $CONN_CACHE{$host_port} if @{$CONN_CACHE{$host_port}} == 0;
 
 	$handle->destroy;
+
+	delete $CONN_CACHE_COUNT{$host_port} if --$CONN_CACHE_COUNT{$host_port} == 0;
+
+	conn_cache_next($host_port);
 }
 
 sub conn_cache_store
 {
 	my ($host_port, $handle) = @_;
 
-	push @{$CONN_CACHE{$host_port}}, $handle;
+	push @{$CONN_CACHE{$host_port}||=[]}, $handle;
 
 	$CONN_CACHE_FREE{$handle} = 1;
 }
@@ -207,6 +249,8 @@ sub conn_cache_store
 sub conn_cache_fetch
 {
 	my( $host_port ) = @_;
+
+	return if !defined $CONN_CACHE{$host_port};
 
 	my ($handle) = grep { $CONN_CACHE_FREE{$_} } @{$CONN_CACHE{$host_port}};
 
